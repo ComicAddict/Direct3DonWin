@@ -1,4 +1,5 @@
 #include "Graphics.h"
+#include <ostream>
 #include <d3dcompiler.h>
 
 #pragma comment(lib, "d3d11.lib")
@@ -27,12 +28,13 @@ Graphics::Graphics(HWND hWnd) {
 	sd.SwapEffect = DXGI_SWAP_EFFECT_DISCARD;
 	sd.Flags = 0;
 
-	UINT creationFlags = D3D11_CREATE_DEVICE_BGRA_SUPPORT;
+	UINT creationFlags = 0u;
 #if defined(_DEBUG)
-	creationFlags |= D3D11_CREATE_DEVICE_DEBUG;
+	creationFlags |= D3D10_CREATE_DEVICE_DEBUG;
 #endif
-	
-	D3D11CreateDeviceAndSwapChain(
+	HRESULT hr;
+
+	hr = D3D11CreateDeviceAndSwapChain(
 		nullptr,
 		D3D_DRIVER_TYPE_HARDWARE,
 		nullptr,
@@ -46,20 +48,26 @@ Graphics::Graphics(HWND hWnd) {
 		nullptr,
 		&pContext
 	);
+
+	if (FAILED(hr))
+		printf("there is an error in create device and swap chain");
 	
 	wrl::ComPtr<ID3D11Resource> pBackBuffer;
-	pSwap->GetBuffer(0, __uuidof(ID3D11Resource), &pBackBuffer);
-	pDevice->CreateRenderTargetView(
+	hr = pSwap->GetBuffer(0, __uuidof(ID3D11Resource), &pBackBuffer);
+	if (FAILED(hr))
+		printf("there is an error in getting buffer");
+	hr = pDevice->CreateRenderTargetView(
 		pBackBuffer.Get(),
 		nullptr,
 		&pTarget
 	);
-	pBackBuffer->Release();
+	if (FAILED(hr))
+		printf("there is an error in create render targetview");
 }
 
 void Graphics::DrawTestTriangle() {
-	wrl::ComPtr<ID3D11Buffer> pVertexBuffer;
-
+	
+	HRESULT hr;
 	struct Vertex {
 		float x;
 		float y;
@@ -70,26 +78,68 @@ void Graphics::DrawTestTriangle() {
 		{0.5f, -0.5f},
 		{-0.5f, -0.5f},
 	};
+
+	wrl::ComPtr<ID3D11Buffer> pVertexBuffer;
 	D3D11_BUFFER_DESC bd = {};
 	bd.BindFlags = D3D11_BIND_VERTEX_BUFFER;
 	bd.Usage = D3D11_USAGE_DEFAULT;
 	bd.CPUAccessFlags = 0u;
 	bd.MiscFlags = 0u;
-	bd.ByteWidth = sizeof(Vertex);
+	bd.ByteWidth = sizeof(vertices);
+	bd.StructureByteStride = sizeof(Vertex);
 	D3D11_SUBRESOURCE_DATA sd = {};
 	sd.pSysMem = vertices;
-	pDevice->CreateBuffer(&bd, &sd, &pVertexBuffer);
+	hr = pDevice->CreateBuffer(&bd, &sd, &pVertexBuffer);
+	if (FAILED(hr))
+		MessageBox(nullptr, "create buffer", "Unk Exception", MB_OK | MB_ICONEXCLAMATION);
+
 	const UINT stride = sizeof(Vertex);
 	const UINT offset = 0u;
-	pContext->IASetVertexBuffers(0u, 1u, &pVertexBuffer, &stride, &offset);
+	pContext->IASetVertexBuffers(0u, 1u, pVertexBuffer.GetAddressOf(), &stride, &offset);
+
+	wrl::ComPtr<ID3DBlob> pBlob;
+
+	wrl::ComPtr<ID3D11PixelShader> pPixelShader;
+	hr = D3DReadFileToBlob(L"PixelShader.cso", &pBlob);
+	if (FAILED(hr))
+		MessageBox(nullptr, "pix shader read", "Unk Exception", MB_OK | MB_ICONEXCLAMATION);
+	hr = pDevice->CreatePixelShader(pBlob->GetBufferPointer(), pBlob->GetBufferSize(), nullptr, &pPixelShader);
+	if (FAILED(hr))
+		MessageBox(nullptr, "pix shader create", "Unk Exception", MB_OK | MB_ICONEXCLAMATION);
+	pContext->PSSetShader(pPixelShader.Get(), nullptr, 0u);
 
 	wrl::ComPtr<ID3D11VertexShader> pVertexShader;
-	wrl::ComPtr<ID3DBlob> pBlob ;
-	D3DReadFileToBlob(L"VertexShad er.cso", &pBlob);
-	pDevice->CreateVertexShader(pBlob->GetBufferPointer(), pBlob->GetBufferSize(), nullptr, &pVertexShader);
-
+	hr = D3DReadFileToBlob(L"VertexShader.cso", &pBlob);
+	if (FAILED(hr))
+		MessageBox(nullptr, "vert shader read", "Unk Exception", MB_OK | MB_ICONEXCLAMATION);
+	hr = pDevice->CreateVertexShader(pBlob->GetBufferPointer(), pBlob->GetBufferSize(), nullptr, &pVertexShader);
+	if (FAILED(hr))
+		MessageBox(nullptr, "create vert shader", "Unk Exception", MB_OK | MB_ICONEXCLAMATION);
 	pContext->VSSetShader(pVertexShader.Get(), nullptr, 0u);
-	pContext->Draw((  UINT)std::size(vertices), 0u);
+
+	wrl::ComPtr<ID3D11InputLayout> pInputLayout;
+	const D3D11_INPUT_ELEMENT_DESC ied[] = {
+		{"Position", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0},
+	};
+	hr = pDevice->CreateInputLayout(ied, (UINT)std::size(ied), pBlob->GetBufferPointer(), pBlob->GetBufferSize(), &pInputLayout); 
+	if (FAILED(hr))
+		MessageBox(nullptr, "create input layout", "Unk Exception", MB_OK | MB_ICONEXCLAMATION);
+	pContext->IASetInputLayout(pInputLayout.Get());
+
+	pContext->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+
+	pContext->OMSetRenderTargets(1u, pTarget.GetAddressOf(), nullptr);
+
+	D3D11_VIEWPORT vp;
+	vp.Width = 800;
+	vp.Height = 600;
+	vp.MinDepth = 0;
+	vp.MaxDepth = 1;
+	vp.TopLeftX = 0;
+	vp.TopLeftY = 0;
+	pContext->RSSetViewports(1u, &vp );
+
+	pContext->Draw((UINT)std::size(vertices), 0u);
 }
 
 void Graphics::EndFrame() {
@@ -104,4 +154,16 @@ void Graphics::EndFrame() {
 void Graphics::ClearBuffer(float r, float g, float b) {
 	const float color[] = { r,g,b,1.0f };
 	pContext->ClearRenderTargetView(pTarget.Get(), color);
+}
+
+const char* Graphics::CExcept::what() const noexcept {
+	return str;
+}
+
+Graphics::CExcept::CExcept(int line, const char* file, std::string s) noexcept 
+	: 
+	Exception(line, file) {
+	std::ostringstream oss;
+	oss << "line: " << line << ", file: " << file << "err: " << s;
+	str = oss.str().c_str();
 }

@@ -22,6 +22,14 @@ public:
 		HRESULT hr;
 
 	};
+	class CExcept : public Exception {
+	public:
+		CExcept(int line, const char* file, std::string s) noexcept;
+		const char* what() const noexcept override;
+	private:
+		const char* str;
+
+	};
 	class DeviceRemovedException : public HrException {
 		using HrException::HrException ;
 	public:
