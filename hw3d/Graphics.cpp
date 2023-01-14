@@ -1,11 +1,15 @@
 #include "Graphics.h"
 #include <ostream>
 #include <d3dcompiler.h>
+#include <cmath>
+#include <DirectXMath.h>
 
 #pragma comment(lib, "d3d11.lib")
 #pragma comment(lib, "D3DCompiler.lib")
 
 namespace wrl = Microsoft::WRL;
+namespace dx = DirectX;
+
 
 #define GFX_THROW_FAILED(hrcall) if(FAILED(hr = (hrcall))) throw Graphics::HrExceptions(__LINE__,__FILE__, hr);
 #define GFX_DEVICE_REMOVED_EXCEPT(hr) Graphics::DeviceRemovedException(__LINE__,__FILE__,(hr))
@@ -30,7 +34,7 @@ Graphics::Graphics(HWND hWnd) {
 
 	UINT creationFlags = 0u;
 #if defined(_DEBUG)
-	creationFlags |= D3D10_CREATE_DEVICE_DEBUG;
+	creationFlags |= D3D11_CREATE_DEVICE_DEBUG;
 #endif
 	HRESULT hr;
 
@@ -63,20 +67,65 @@ Graphics::Graphics(HWND hWnd) {
 	);
 	if (FAILED(hr))
 		printf("there is an error in create render targetview");
+
+	D3D11_DEPTH_STENCIL_DESC dsDesc = {};
+	dsDesc.DepthEnable = TRUE;
+	dsDesc.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ALL;
+	dsDesc.DepthFunc = D3D11_COMPARISON_LESS;
+	wrl::ComPtr<ID3D11DepthStencilState> pDSState;
+	hr = pDevice->CreateDepthStencilState(&dsDesc, &pDSState);
+	if (FAILED(hr))
+		MessageBox(nullptr, "Depth Stencil Creation", "Unk Exception", MB_OK | MB_ICONEXCLAMATION);
+
+	pContext->OMSetDepthStencilState(pDSState.Get(), 1u);
+
+	wrl::ComPtr<ID3D11Texture2D> pDepthStencil;
+	D3D11_TEXTURE2D_DESC descDepth = {};
+	descDepth.Width = 800u;
+	descDepth.Height = 600u;
+	descDepth.MipLevels = 1u;
+	descDepth.ArraySize = 1u;
+	descDepth.Format = DXGI_FORMAT_D32_FLOAT;
+	descDepth.SampleDesc.Count = 1u;
+	descDepth.SampleDesc.Quality = 0u;
+	descDepth.Usage = D3D11_USAGE_DEFAULT;
+	descDepth.BindFlags = D3D11_BIND_DEPTH_STENCIL;
+	hr = pDevice->CreateTexture2D(&descDepth, nullptr, &pDepthStencil);
+	if (FAILED(hr))
+		MessageBox(nullptr, "Texture Creation", "Unk Exception", MB_OK | MB_ICONEXCLAMATION);
+
+	D3D11_DEPTH_STENCIL_VIEW_DESC descDSV = {};
+	descDSV.Format = DXGI_FORMAT_D32_FLOAT;
+	descDSV.ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2D;
+	descDSV.Texture2D.MipSlice = 0u;
+	hr = pDevice->CreateDepthStencilView(pDepthStencil.Get(), &descDSV, &pDSV);
+	if (FAILED(hr))
+		MessageBox(nullptr, "Depth Stencil View Creation", "Unk Exception", MB_OK | MB_ICONEXCLAMATION);
+	pContext->OMSetRenderTargets(1u, pTarget.GetAddressOf(), pDSV.Get());
 }
 
-void Graphics::DrawTestTriangle() {
+void Graphics::DrawTestTriangle(float angle, float x, float y) {
 	
 	HRESULT hr;
 	struct Vertex {
 		float x;
 		float y;
+		float z;
+		unsigned char r;
+		unsigned char g;
+		unsigned char b;
+		unsigned char a;
 	};
-
-	const Vertex vertices[] = {
-		{0.0f, 0.5f},
-		{0.5f, -0.5f},
-		{-0.5f, -0.5f},
+	Vertex vertices[] =
+	{
+		{-1.0f, -1.0f, -1.0f,	0, 255, 0, 0},
+		{ 1.0f,-1.0f,-1.0f,		255, 0, 0, 0	 },
+		{ -1.0f,1.0f,-1.0f,		0, 0, 255, 0 },
+		{ 1.0f,1.0f,-1.0f,		255, 255, 0, 0},
+		{ -1.0f,-1.0f,1.0f,		0, 255, 255, 0},
+		{ 1.0f,-1.0f,1.0f,		255, 0, 255, 0 },
+		{ -1.0f,1.0f,1.0f,		0, 255, 0, 0},
+		{ 1.0f,1.0f,1.0f,		0, 255, 0, 0},
 	};
 
 	wrl::ComPtr<ID3D11Buffer> pVertexBuffer;
@@ -96,7 +145,58 @@ void Graphics::DrawTestTriangle() {
 	const UINT stride = sizeof(Vertex);
 	const UINT offset = 0u;
 	pContext->IASetVertexBuffers(0u, 1u, pVertexBuffer.GetAddressOf(), &stride, &offset);
+	
+	const unsigned short indices[] =
+	{
+		0,2,1, 2,3,1,
+		1,3,5, 3,7,5,
+		2,6,3, 3,6,7,
+		4,5,7, 4,7,6,
+		0,4,2, 2,4,6,
+		0,1,4, 1,5,4
+	};
 
+	wrl::ComPtr<ID3D11Buffer> pIndexBuffer;
+	bd.BindFlags = D3D11_BIND_INDEX_BUFFER;
+	bd.Usage = D3D11_USAGE_DEFAULT;
+	bd.CPUAccessFlags = 0u;
+	bd.MiscFlags = 0u;
+	bd.ByteWidth = sizeof(indices);
+	bd.StructureByteStride = sizeof(unsigned short);
+	sd.pSysMem = indices;
+	hr = pDevice->CreateBuffer(&bd, &sd, &pIndexBuffer);
+
+	pContext->IASetIndexBuffer(pIndexBuffer.Get(), DXGI_FORMAT_R16_UINT, 0u);
+
+	struct ConstantBuffer {
+		dx::XMMATRIX transform;
+	};
+
+	
+	const ConstantBuffer cb = {
+		{
+			dx::XMMatrixTranspose(
+				dx::XMMatrixRotationZ(angle)*
+				dx::XMMatrixRotationX(angle)*
+				dx::XMMatrixTranslation(x,0.0f,y + 4.0f)*
+				dx::XMMatrixPerspectiveLH(1.0f,3.0f / 4.0f,0.5f,10.0f)
+			)
+		}
+	};
+
+	wrl::ComPtr<ID3D11Buffer> pCB;
+	D3D11_BUFFER_DESC cbd{};
+	cbd.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+	cbd.Usage = D3D11_USAGE_DYNAMIC;
+	cbd.CPUAccessFlags = D3D10_CPU_ACCESS_WRITE;
+	cbd.MiscFlags = 0u;
+	cbd.ByteWidth = sizeof(cb);
+	cbd.StructureByteStride = 0u;
+	D3D11_SUBRESOURCE_DATA csd{};
+	csd.pSysMem = &cb;
+	pDevice->CreateBuffer(&cbd, &csd, &pCB);
+
+	pContext->VSSetConstantBuffers(0u, 1u, pCB.GetAddressOf());
 	wrl::ComPtr<ID3DBlob> pBlob;
 
 	wrl::ComPtr<ID3D11PixelShader> pPixelShader;
@@ -119,7 +219,8 @@ void Graphics::DrawTestTriangle() {
 
 	wrl::ComPtr<ID3D11InputLayout> pInputLayout;
 	const D3D11_INPUT_ELEMENT_DESC ied[] = {
-		{"Position", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0},
+		{"Position", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0},
+		{"Color", 0, DXGI_FORMAT_R8G8B8A8_UNORM, 0, D3D11_APPEND_ALIGNED_ELEMENT, D3D11_INPUT_PER_VERTEX_DATA, 0},
 	};
 	hr = pDevice->CreateInputLayout(ied, (UINT)std::size(ied), pBlob->GetBufferPointer(), pBlob->GetBufferSize(), &pInputLayout); 
 	if (FAILED(hr))
@@ -127,8 +228,6 @@ void Graphics::DrawTestTriangle() {
 	pContext->IASetInputLayout(pInputLayout.Get());
 
 	pContext->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-
-	pContext->OMSetRenderTargets(1u, pTarget.GetAddressOf(), nullptr);
 
 	D3D11_VIEWPORT vp;
 	vp.Width = 800;
@@ -139,7 +238,7 @@ void Graphics::DrawTestTriangle() {
 	vp.TopLeftY = 0;
 	pContext->RSSetViewports(1u, &vp );
 
-	pContext->Draw((UINT)std::size(vertices), 0u);
+	pContext->DrawIndexed((UINT)std::size(indices), 0u, 0u);
 }
 
 void Graphics::EndFrame() {
@@ -154,6 +253,7 @@ void Graphics::EndFrame() {
 void Graphics::ClearBuffer(float r, float g, float b) {
 	const float color[] = { r,g,b,1.0f };
 	pContext->ClearRenderTargetView(pTarget.Get(), color);
+	pContext->ClearDepthStencilView(pDSV.Get(), D3D11_CLEAR_DEPTH, 1.0f, 0u);
 }
 
 const char* Graphics::CExcept::what() const noexcept {

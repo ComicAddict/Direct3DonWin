@@ -5,6 +5,7 @@
 #include <wrl.h>
 #include <d3d11sdklayers.h>
 
+
 class Graphics {
 public:
 	class Exception : public CustomException {
@@ -42,10 +43,11 @@ public:
 	~Graphics() = default;
 	void EndFrame();
 	void ClearBuffer(float r, float g, float b);
-	void DrawTestTriangle();
+	void DrawTestTriangle(float angle, float x, float y);
 private:
 	Microsoft::WRL::ComPtr<ID3D11Device> pDevice;
 	Microsoft::WRL::ComPtr<IDXGISwapChain> pSwap;
 	Microsoft::WRL::ComPtr<ID3D11DeviceContext> pContext;
 	Microsoft::WRL::ComPtr<ID3D11RenderTargetView> pTarget;
+	Microsoft::WRL::ComPtr<ID3D11DepthStencilView> pDSV;
 };
