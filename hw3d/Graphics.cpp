@@ -1,6 +1,5 @@
 #include "Graphics.h"
 #include <ostream>
-#include <d3dcompiler.h>
 #include <cmath>
 #include <DirectXMath.h>
 
